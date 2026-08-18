@@ -29,8 +29,11 @@ services:
     image: mysql:8.4
     env_file:
       - .env
+
     volumes:
       - mysql-data:/var/lib/mysql
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
     ports:
       - "3306:3306"
 
@@ -43,4 +46,4 @@ services:
 
 volumes:
   mysql-data:
-    external: true
+    name: mysql-data
