@@ -4,9 +4,10 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 jobs:
-  build-and-push:
+  build-test-push:
     runs-on: ubuntu-latest
 
     steps:
@@ -15,6 +16,45 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
+      - name: Build test image
+        run: |
+          docker build -t my-fastapi-app:test .
+
+      - name: Create CI environment file
+        run: |
+          cat <<EOF > .env
+          DB_HOST=db
+          DB_USER=root
+          DB_PASSWORD=root123
+          DB_NAME=company
+          MYSQL_ROOT_PASSWORD=root123
+          MYSQL_DATABASE=company
+          EOF
+
+      - name: Start application stack
+        run: |
+          docker compose up -d --build
+
+      - name: Wait for services
+        run: |
+          for i in {1..12}; do
+            if curl -f http://localhost:8000/health; then
+              echo "API is healthy"
+              exit 0
+            fi
+
+            echo "Waiting for API..."
+            sleep 5
+          done
+
+          echo "API health check failed"
+          docker compose logs
+          exit 1
+
+      - name: Test employees endpoint
+        run: |
+          curl -f http://localhost:8000/employees
 
       - name: Login to Docker Hub
         uses: docker/login-action@v4
@@ -28,5 +68,10 @@ jobs:
           context: .
           push: true
           tags: |
-            asrawat130/my-fastapi-app:v2
+            asrawat130/my-fastapi-app:v3
             asrawat130/my-fastapi-app:latest
+
+      - name: Stop test environment
+        if: always()
+        run: |
+          docker compose down
