@@ -68,7 +68,7 @@ jobs:
           context: .
           push: true
           tags: |
-            asrawat130/my-fastapi-app:v3
+            asrawat130/my-fastapi-app:v4
             asrawat130/my-fastapi-app:latest
 
       - name: Stop test environment
