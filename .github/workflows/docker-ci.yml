@@ -6,16 +6,20 @@ on:
       - main
   workflow_dispatch:
 
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
   build-test-push:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout source code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Build test image
         run: |
@@ -63,13 +67,31 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: true
           tags: |
-            asrawat130/my-fastapi-app:v5
+            asrawat130/my-fastapi-app:v6
             asrawat130/my-fastapi-app:latest
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: "projects/19340905514/locations/global/workloadIdentityPools/github-actions/providers/github"
+          service_account: "github-cloudrun-deployer@docker-learning-505907.iam.gserviceaccount.com"
+
+      - name: Deploy to Cloud Run
+        id: deploy
+        uses: google-github-actions/deploy-cloudrun@v3
+        with:
+          service: fastapi-docker-learning
+          region: asia-south1
+          image: docker.io/asrawat130/my-fastapi-app:v6
+
+      - name: Verify Cloud Run deployment
+        run: |
+          curl -f "${{ steps.deploy.outputs.url }}/health"
 
       - name: Stop test environment
         if: always()
