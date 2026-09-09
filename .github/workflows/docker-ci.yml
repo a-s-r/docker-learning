@@ -18,6 +18,9 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@v7
 
+      - name: Set image tag
+        run: echo "IMAGE_TAG=${GITHUB_SHA::7}" >> $GITHUB_ENV
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
@@ -72,7 +75,7 @@ jobs:
           context: .
           push: true
           tags: |
-            asrawat130/my-fastapi-app:v6
+            asrawat130/my-fastapi-app:${{ env.IMAGE_TAG }}
             asrawat130/my-fastapi-app:latest
 
       - name: Authenticate to Google Cloud
@@ -87,7 +90,7 @@ jobs:
         with:
           service: fastapi-docker-learning
           region: asia-south1
-          image: docker.io/asrawat130/my-fastapi-app:v6
+          image: docker.io/asrawat130/my-fastapi-app:${{ env.IMAGE_TAG }}
 
       - name: Verify Cloud Run deployment
         run: |
