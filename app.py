@@ -31,7 +31,7 @@ def get_connection():
 
 @app.get("/")
 def home():
-    return {"message": "Docker application updated successfully!"}
+    return {"message": "Docker CI/CD deployment v2 is working!"}
 
 
 @app.get("/health")
