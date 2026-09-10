@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import time
@@ -11,10 +12,28 @@ from pydantic import BaseModel
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s %(message)s"
+    format="%(message)s"
 )
 
 logger = logging.getLogger("fastapi-app")
+
+
+def log_event(event: str, severity: str = "INFO", **kwargs):
+    log_data = {
+        "severity": severity,
+        "event": event,
+        **kwargs
+    }
+
+    message = json.dumps(log_data)
+
+    if severity == "ERROR":
+        logger.error(message)
+    elif severity == "WARNING":
+        logger.warning(message)
+    else:
+        logger.info(message)
+
 
 app = FastAPI()
 
@@ -49,11 +68,11 @@ async def request_logging_middleware(request: Request, call_next):
     request.state.request_id = request_id
     start_time = time.perf_counter()
 
-    logger.info(
-        "request_started request_id=%s method=%s path=%s",
-        request_id,
-        request.method,
-        request.url.path
+    log_event(
+        "request_started",
+        request_id=request_id,
+        method=request.method,
+        path=request.url.path
     )
 
     try:
@@ -64,14 +83,13 @@ async def request_logging_middleware(request: Request, call_next):
             2
         )
 
-        logger.info(
-            "request_completed request_id=%s method=%s path=%s "
-            "status=%s duration_ms=%s",
-            request_id,
-            request.method,
-            request.url.path,
-            response.status_code,
-            duration_ms
+        log_event(
+            "request_completed",
+            request_id=request_id,
+            method=request.method,
+            path=request.url.path,
+            status=response.status_code,
+            duration_ms=duration_ms
         )
 
         response.headers["X-Request-ID"] = request_id
@@ -84,12 +102,18 @@ async def request_logging_middleware(request: Request, call_next):
             2
         )
 
+        log_event(
+            "request_failed",
+            severity="ERROR",
+            request_id=request_id,
+            method=request.method,
+            path=request.url.path,
+            duration_ms=duration_ms
+        )
+
         logger.exception(
-            "request_failed request_id=%s method=%s path=%s duration_ms=%s",
-            request_id,
-            request.method,
-            request.url.path,
-            duration_ms
+            "Unhandled exception request_id=%s",
+            request_id
         )
 
         return JSONResponse(
@@ -97,83 +121,115 @@ async def request_logging_middleware(request: Request, call_next):
             content={
                 "detail": "Internal server error",
                 "request_id": request_id
+            },
+            headers={
+                "X-Request-ID": request_id
             }
         )
 
 
 @app.get("/")
 def home():
-    return {"message": "Docker CI/CD deployment v2 is working!"}
+    return {
+        "message": "Docker CI/CD deployment v2 is working!"
+    }
 
 
 @app.get("/health")
 def health():
-    return {"status": "healthy"}
+    return {
+        "status": "healthy"
+    }
 
 
 @app.get("/employees")
 def get_employees(request: Request):
     request_id = request.state.request_id
 
-    logger.info(
-        "fetching_employees request_id=%s",
-        request_id
+    log_event(
+        "fetching_employees",
+        request_id=request_id
     )
 
-    connection = get_connection()
-    cursor = connection.cursor()
+    connection = None
+    cursor = None
 
-    cursor.execute("SELECT id, name FROM employees")
-    rows = cursor.fetchall()
+    try:
+        connection = get_connection()
+        cursor = connection.cursor()
 
-    cursor.close()
-    connection.close()
+        cursor.execute(
+            "SELECT id, name FROM employees"
+        )
 
-    logger.info(
-        "employees_fetched request_id=%s count=%s",
-        request_id,
-        len(rows)
-    )
+        rows = cursor.fetchall()
 
-    return [
-        {"id": row[0], "name": row[1]}
-        for row in rows
-    ]
+        log_event(
+            "employees_fetched",
+            request_id=request_id,
+            count=len(rows)
+        )
+
+        return [
+            {
+                "id": row[0],
+                "name": row[1]
+            }
+            for row in rows
+        ]
+
+    finally:
+        if cursor:
+            cursor.close()
+
+        if connection and connection.is_connected():
+            connection.close()
 
 
 @app.post("/employees")
-def create_employee(employee: EmployeeCreate, request: Request):
+def create_employee(
+    employee: EmployeeCreate,
+    request: Request
+):
     request_id = request.state.request_id
 
-    logger.info(
-        "creating_employee request_id=%s",
-        request_id
+    log_event(
+        "employee_creating",
+        request_id=request_id
     )
 
-    connection = get_connection()
-    cursor = connection.cursor()
+    connection = None
+    cursor = None
 
-    cursor.execute(
-        "INSERT INTO employees (name) VALUES (%s)",
-        (employee.name,)
-    )
+    try:
+        connection = get_connection()
+        cursor = connection.cursor()
 
-    connection.commit()
-    employee_id = cursor.lastrowid
+        cursor.execute(
+            "INSERT INTO employees (name) VALUES (%s)",
+            (employee.name,)
+        )
 
-    cursor.close()
-    connection.close()
+        connection.commit()
+        employee_id = cursor.lastrowid
 
-    logger.info(
-        "employee_created request_id=%s employee_id=%s",
-        request_id,
-        employee_id
-    )
+        log_event(
+            "employee_created",
+            request_id=request_id,
+            employee_id=employee_id
+        )
 
-    return {
-        "id": employee_id,
-        "name": employee.name
-    }
+        return {
+            "id": employee_id,
+            "name": employee.name
+        }
+
+    finally:
+        if cursor:
+            cursor.close()
+
+        if connection and connection.is_connected():
+            connection.close()
 
 
 @app.put("/employees/{employee_id}")
@@ -184,96 +240,111 @@ def update_employee(
 ):
     request_id = request.state.request_id
 
-    logger.info(
-        "updating_employee request_id=%s employee_id=%s",
-        request_id,
-        employee_id
+    log_event(
+        "employee_updating",
+        request_id=request_id,
+        employee_id=employee_id
     )
 
-    connection = get_connection()
-    cursor = connection.cursor()
+    connection = None
+    cursor = None
 
-    cursor.execute(
-        "UPDATE employees SET name = %s WHERE id = %s",
-        (employee.name, employee_id)
-    )
+    try:
+        connection = get_connection()
+        cursor = connection.cursor()
 
-    connection.commit()
-
-    if cursor.rowcount == 0:
-        cursor.close()
-        connection.close()
-
-        logger.warning(
-            "employee_not_found request_id=%s employee_id=%s",
-            request_id,
-            employee_id
+        cursor.execute(
+            "UPDATE employees SET name = %s WHERE id = %s",
+            (employee.name, employee_id)
         )
 
-        raise HTTPException(
-            status_code=404,
-            detail="Employee not found"
+        connection.commit()
+
+        if cursor.rowcount == 0:
+            log_event(
+                "employee_not_found",
+                severity="WARNING",
+                request_id=request_id,
+                employee_id=employee_id
+            )
+
+            raise HTTPException(
+                status_code=404,
+                detail="Employee not found"
+            )
+
+        log_event(
+            "employee_updated",
+            request_id=request_id,
+            employee_id=employee_id
         )
 
-    cursor.close()
-    connection.close()
+        return {
+            "id": employee_id,
+            "name": employee.name
+        }
 
-    logger.info(
-        "employee_updated request_id=%s employee_id=%s",
-        request_id,
-        employee_id
-    )
+    finally:
+        if cursor:
+            cursor.close()
 
-    return {
-        "id": employee_id,
-        "name": employee.name
-    }
+        if connection and connection.is_connected():
+            connection.close()
 
 
 @app.delete("/employees/{employee_id}")
-def delete_employee(employee_id: int, request: Request):
+def delete_employee(
+    employee_id: int,
+    request: Request
+):
     request_id = request.state.request_id
 
-    logger.info(
-        "deleting_employee request_id=%s employee_id=%s",
-        request_id,
-        employee_id
+    log_event(
+        "employee_deleting",
+        request_id=request_id,
+        employee_id=employee_id
     )
 
-    connection = get_connection()
-    cursor = connection.cursor()
+    connection = None
+    cursor = None
 
-    cursor.execute(
-        "DELETE FROM employees WHERE id = %s",
-        (employee_id,)
-    )
+    try:
+        connection = get_connection()
+        cursor = connection.cursor()
 
-    connection.commit()
-
-    if cursor.rowcount == 0:
-        cursor.close()
-        connection.close()
-
-        logger.warning(
-            "employee_not_found request_id=%s employee_id=%s",
-            request_id,
-            employee_id
+        cursor.execute(
+            "DELETE FROM employees WHERE id = %s",
+            (employee_id,)
         )
 
-        raise HTTPException(
-            status_code=404,
-            detail="Employee not found"
+        connection.commit()
+
+        if cursor.rowcount == 0:
+            log_event(
+                "employee_not_found",
+                severity="WARNING",
+                request_id=request_id,
+                employee_id=employee_id
+            )
+
+            raise HTTPException(
+                status_code=404,
+                detail="Employee not found"
+            )
+
+        log_event(
+            "employee_deleted",
+            request_id=request_id,
+            employee_id=employee_id
         )
 
-    cursor.close()
-    connection.close()
+        return {
+            "message": "Employee deleted"
+        }
 
-    logger.info(
-        "employee_deleted request_id=%s employee_id=%s",
-        request_id,
-        employee_id
-    )
+    finally:
+        if cursor:
+            cursor.close()
 
-    return {
-        "message": "Employee deleted"
-    }
+        if connection and connection.is_connected():
+            connection.close()
