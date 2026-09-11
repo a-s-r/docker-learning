@@ -141,6 +141,50 @@ def health():
         "status": "healthy"
     }
 
+@app.get("/ready")
+def readiness(request: Request):
+    request_id = request.state.request_id
+
+    connection = None
+    cursor = None
+
+    try:
+        connection = get_connection()
+        cursor = connection.cursor()
+
+        cursor.execute("SELECT 1")
+        cursor.fetchone()
+
+        log_event(
+            "readiness_check_passed",
+            request_id=request_id
+        )
+
+        return {
+            "status": "ready"
+        }
+
+    except Exception:
+        log_event(
+            "readiness_check_failed",
+            severity="ERROR",
+            request_id=request_id
+        )
+
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "not_ready",
+                "request_id": request_id
+            }
+        )
+
+    finally:
+        if cursor:
+            cursor.close()
+
+        if connection and connection.is_connected():
+            connection.close()
 
 @app.get("/employees")
 def get_employees(request: Request):
