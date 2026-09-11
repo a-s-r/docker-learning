@@ -112,6 +112,7 @@ jobs:
       - name: Verify Cloud Run deployment
         run: |
           curl -f "${{ steps.deploy.outputs.url }}/health"
+          curl -f "${{ steps.deploy.outputs.url }}/ready"
 
       - name: Stop test environment
         if: always()
