@@ -186,10 +186,6 @@ def readiness(request: Request):
         if connection and connection.is_connected():
             connection.close()
 
-@app.get("/test-error")
-def test_error():
-    raise RuntimeError("Intentional monitoring test error")
-
 @app.get("/employees")
 def get_employees(request: Request):
     request_id = request.state.request_id
