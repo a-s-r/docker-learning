@@ -3,3 +3,6 @@ uvicorn
 mysql-connector-python
 requests
 httpx
+opentelemetry-api
+opentelemetry-sdk
+opentelemetry-exporter-gcp-trace

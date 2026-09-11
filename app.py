@@ -4,6 +4,12 @@ import os
 import time
 import uuid
 
+from opentelemetry import context, trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.exporter.cloud_trace import CloudTraceSpanExporter
+from opentelemetry.propagate import extract
+
 import mysql.connector
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -34,6 +40,18 @@ def log_event(event: str, severity: str = "INFO", **kwargs):
     else:
         logger.info(message)
 
+trace.set_tracer_provider(TracerProvider())
+
+tracer = trace.get_tracer(__name__)
+
+if os.getenv("INSTANCE_CONNECTION_NAME"):
+    exporter = CloudTraceSpanExporter()
+
+    span_processor = BatchSpanProcessor(exporter)
+
+    trace.get_tracer_provider().add_span_processor(
+        span_processor
+    )
 
 app = FastAPI()
 
@@ -60,13 +78,19 @@ def get_connection():
         database=os.getenv("DB_NAME")
     )
 
-
 @app.middleware("http")
 async def request_logging_middleware(request: Request, call_next):
     request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
 
     request.state.request_id = request_id
     start_time = time.perf_counter()
+
+    # Extract incoming W3C trace context from Cloud Run.
+    carrier = dict(request.headers)
+    extracted_context = extract(carrier)
+
+    # Make the extracted trace context active for this request.
+    token = context.attach(extracted_context)
 
     log_event(
         "request_started",
@@ -127,6 +151,8 @@ async def request_logging_middleware(request: Request, call_next):
             }
         )
 
+    finally:
+        context.detach(token)
 
 @app.get("/")
 def home():
@@ -199,14 +225,37 @@ def get_employees(request: Request):
     cursor = None
 
     try:
-        connection = get_connection()
-        cursor = connection.cursor()
+        with tracer.start_as_current_span("db.connect") as span:
+            connection = get_connection()
 
-        cursor.execute(
-            "SELECT id, name FROM employees"
-        )
+            span.set_attribute(
+                "db.system",
+                "mysql"
+            )
 
-        rows = cursor.fetchall()
+        with tracer.start_as_current_span("db.query") as span:
+            cursor = connection.cursor()
+
+            cursor.execute(
+                "SELECT id, name FROM employees"
+            )
+
+            rows = cursor.fetchall()
+
+            span.set_attribute(
+                "db.system",
+                "mysql"
+            )
+
+            span.set_attribute(
+                "db.operation",
+                "SELECT"
+            )
+
+            span.set_attribute(
+                "db.result_count",
+                len(rows)
+            )
 
         log_event(
             "employees_fetched",
@@ -228,7 +277,6 @@ def get_employees(request: Request):
 
         if connection and connection.is_connected():
             connection.close()
-
 
 @app.post("/employees")
 def create_employee(
